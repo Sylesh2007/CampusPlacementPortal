@@ -11,58 +11,131 @@ connectDB();
 
 const app = express();
 
-// Middlewares
-app.use(cors());
+// ============================================================
+// MIDDLEWARES
+// ============================================================
+
+// CORS configuration
+app.use(
+  cors({
+    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+    credentials: true,
+  })
+);
+
+// Parse JSON request bodies
 app.use(express.json());
+
+// Parse URL-encoded request bodies
 app.use(express.urlencoded({ extended: true }));
 
-// Request Logger (Development helpful)
+// Request Logger
 app.use((req, res, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
+  console.log(
+    `[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`
+  );
   next();
 });
 
-// Import route modules
+// ============================================================
+// ROUTES
+// ============================================================
+
 const authRoutes = require('./routes/authRoutes');
 const companyRoutes = require('./routes/companyRoutes');
 const driveRoutes = require('./routes/driveRoutes');
 const applicationRoutes = require('./routes/applicationRoutes');
 
-// --- PDF Required Direct REST API Endpoints ---
-// Section 12: REST APIs
-// Authentication: POST /register, POST /login
+// ------------------------------------------------------------
+// Authentication Routes
+// POST /register
+// POST /login
+// GET  /me
+// ------------------------------------------------------------
 app.use('/', authRoutes);
 app.use('/api', authRoutes);
 
-// Companies: GET /companies, POST /companies, PUT /companies/:id, DELETE /companies/:id
+// ------------------------------------------------------------
+// Company Routes
+// GET    /companies
+// POST   /companies
+// PUT    /companies/:id
+// DELETE /companies/:id
+// ------------------------------------------------------------
 app.use('/companies', companyRoutes);
 app.use('/api/companies', companyRoutes);
 
-// Placement Drives: GET /drives, POST /drives, PUT /drives/:id, DELETE /drives/:id
+// ------------------------------------------------------------
+// Placement Drive Routes
+// GET    /drives
+// POST   /drives
+// PUT    /drives/:id
+// DELETE /drives/:id
+// ------------------------------------------------------------
 app.use('/drives', driveRoutes);
 app.use('/api/drives', driveRoutes);
 
-// Applications: POST /apply, GET /applications, PUT /applications/:id, DELETE /applications/:id
+// ------------------------------------------------------------
+// Application Routes
+// POST   /apply
+// GET    /applications
+// PUT    /applications/:id
+// DELETE /applications/:id
+// ------------------------------------------------------------
 app.use('/', applicationRoutes);
 app.use('/api', applicationRoutes);
 
-// Root route
+// ============================================================
+// ROOT / HEALTH CHECK ROUTE
+// ============================================================
+
 app.get('/', (req, res) => {
   res.status(200).json({
+    success: true,
     project: 'Campus Placement Management Portal',
     description: 'MERN Stack Mini Project Backend REST API',
     status: 'Running & Connected to MongoDB Atlas',
+    environment: process.env.NODE_ENV || 'development',
+
     endpoints: {
-      auth: ['POST /register', 'POST /login', 'GET /me'],
-      companies: ['GET /companies', 'POST /companies', 'PUT /companies/:id', 'DELETE /companies/:id'],
-      drives: ['GET /drives', 'POST /drives', 'PUT /drives/:id', 'DELETE /drives/:id'],
-      applications: ['POST /apply', 'GET /applications', 'PUT /applications/:id', 'DELETE /applications/:id'],
-      reports: ['GET /reports/placement-stats'],
+      authentication: [
+        'POST /register',
+        'POST /login',
+        'GET /me',
+      ],
+
+      companies: [
+        'GET /companies',
+        'POST /companies',
+        'PUT /companies/:id',
+        'DELETE /companies/:id',
+      ],
+
+      placementDrives: [
+        'GET /drives',
+        'POST /drives',
+        'PUT /drives/:id',
+        'DELETE /drives/:id',
+      ],
+
+      applications: [
+        'POST /apply',
+        'GET /applications',
+        'PUT /applications/:id',
+        'DELETE /applications/:id',
+      ],
+
+      reports: [
+        'GET /reports/placement-stats',
+      ],
     },
   });
 });
 
-// 404 Handler
+// ============================================================
+// 404 HANDLER
+// ============================================================
+
 app.use((req, res) => {
   res.status(404).json({
     success: false,
@@ -70,18 +143,39 @@ app.use((req, res) => {
   });
 });
 
-// Global Error Handler
+// ============================================================
+// GLOBAL ERROR HANDLER
+// ============================================================
+
 app.use((err, req, res, next) => {
   console.error('Unhandled Error:', err.stack);
+
   res.status(err.status || 500).json({
     success: false,
     message: err.message || 'Internal Server Error',
   });
 });
 
+// ============================================================
+// SERVER
+// ============================================================
+
+// Render provides process.env.PORT.
+// 5000 is used when running locally.
 const PORT = process.env.PORT || 5000;
-const server = app.listen(PORT, () => {
-  console.log(`Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`);
+
+// Listen on 0.0.0.0 so Render can access the server.
+const server = app.listen(PORT, '0.0.0.0', () => {
+  console.log(
+    `Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`
+  );
 });
 
-module.exports = { app, server };
+// ============================================================
+// EXPORT
+// ============================================================
+
+module.exports = {
+  app,
+  server,
+};

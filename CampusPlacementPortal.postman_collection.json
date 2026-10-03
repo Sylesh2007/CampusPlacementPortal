@@ -1,0 +1,458 @@
+{
+  "info": {
+    "_postman_id": "c7a8b912-45e1-4c55-9012-placementportal01",
+    "name": "Campus Placement Management Portal API",
+    "description": "Comprehensive Postman Collection for testing all REST APIs of the Campus Placement Management Portal (MERN Stack Mini Project) adhering strictly to the specification PDF.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:5000",
+      "type": "string"
+    },
+    {
+      "key": "adminToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "studentToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "companyToken",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Authentication",
+      "item": [
+        {
+          "name": "Register - Student",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Rohan Sharma\",\n  \"email\": \"rohan@campus.edu\",\n  \"password\": \"studentpassword123\",\n  \"role\": \"student\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/register",
+              "host": ["{{baseUrl}}"],
+              "path": ["register"]
+            }
+          }
+        },
+        {
+          "name": "Register - Company",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Adobe India\",\n  \"email\": \"hr@adobe.com\",\n  \"password\": \"companypassword123\",\n  \"role\": \"company\",\n  \"companyName\": \"Adobe Systems\",\n  \"location\": \"Noida & Bangalore\",\n  \"website\": \"https://www.adobe.com\",\n  \"HRName\": \"Aditi Roy\",\n  \"packageOffered\": \"21 LPA\",\n  \"eligibilityCriteria\": \"CGPA >= 7.5, Computer Science & IT\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/register",
+              "host": ["{{baseUrl}}"],
+              "path": ["register"]
+            }
+          }
+        },
+        {
+          "name": "Login - Admin",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json.token) {",
+                  "  pm.collectionVariables.set('adminToken', json.token);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"admin@campus.edu\",\n  \"password\": \"adminpassword123\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["login"]
+            }
+          }
+        },
+        {
+          "name": "Login - Student",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json.token) {",
+                  "  pm.collectionVariables.set('studentToken', json.token);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"alex@campus.edu\",\n  \"password\": \"studentpassword123\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["login"]
+            }
+          }
+        },
+        {
+          "name": "Login - Company",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json.token) {",
+                  "  pm.collectionVariables.set('companyToken', json.token);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"hr@google.com\",\n  \"password\": \"companypassword123\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["login"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Companies",
+      "item": [
+        {
+          "name": "GET /companies",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/companies",
+              "host": ["{{baseUrl}}"],
+              "path": ["companies"]
+            }
+          }
+        },
+        {
+          "name": "POST /companies",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"companyId\": \"CMP005\",\n  \"companyName\": \"Oracle\",\n  \"location\": \"Bangalore\",\n  \"website\": \"https://www.oracle.com\",\n  \"HRName\": \"Kavita Rao\",\n  \"packageOffered\": \"18 LPA\",\n  \"eligibilityCriteria\": \"CGPA >= 7.0, Database systems knowledge\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/companies",
+              "host": ["{{baseUrl}}"],
+              "path": ["companies"]
+            }
+          }
+        },
+        {
+          "name": "PUT /companies/:id",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"packageOffered\": \"20 LPA\",\n  \"location\": \"Bangalore & Pune\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/companies/CMP005",
+              "host": ["{{baseUrl}}"],
+              "path": ["companies", "CMP005"]
+            }
+          }
+        },
+        {
+          "name": "DELETE /companies/:id",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/companies/CMP005",
+              "host": ["{{baseUrl}}"],
+              "path": ["companies", "CMP005"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Placement Drives",
+      "item": [
+        {
+          "name": "GET /drives",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/drives",
+              "host": ["{{baseUrl}}"],
+              "path": ["drives"]
+            }
+          }
+        },
+        {
+          "name": "POST /drives",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{companyToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"driveId\": \"DRV005\",\n  \"companyId\": \"CMP001\",\n  \"jobRole\": \"Data Analyst & BI Specialist\",\n  \"driveDate\": \"2026-11-15T10:00:00.000Z\",\n  \"venue\": \"Seminar Hall 4, CS Block\",\n  \"lastDateToApply\": \"2026-11-05T23:59:59.000Z\",\n  \"vacancies\": 10\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/drives",
+              "host": ["{{baseUrl}}"],
+              "path": ["drives"]
+            }
+          }
+        },
+        {
+          "name": "PUT /drives/:id",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{companyToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"vacancies\": 12,\n  \"venue\": \"Auditorium Hall 2 & Online Proctored\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/drives/DRV005",
+              "host": ["{{baseUrl}}"],
+              "path": ["drives", "DRV005"]
+            }
+          }
+        },
+        {
+          "name": "DELETE /drives/:id",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{companyToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/drives/DRV005",
+              "host": ["{{baseUrl}}"],
+              "path": ["drives", "DRV005"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Applications",
+      "item": [
+        {
+          "name": "POST /apply",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{studentToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"driveId\": \"DRV002\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/apply",
+              "host": ["{{baseUrl}}"],
+              "path": ["apply"]
+            }
+          }
+        },
+        {
+          "name": "GET /applications",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/applications",
+              "host": ["{{baseUrl}}"],
+              "path": ["applications"]
+            }
+          }
+        },
+        {
+          "name": "PUT /applications/:id (Update Status & Selection)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{companyToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"Selected\",\n  \"selected\": true\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/applications/APP001",
+              "host": ["{{baseUrl}}"],
+              "path": ["applications", "APP001"]
+            }
+          }
+        },
+        {
+          "name": "DELETE /applications/:id",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/applications/APP004",
+              "host": ["{{baseUrl}}"],
+              "path": ["applications", "APP004"]
+            }
+          }
+        },
+        {
+          "name": "GET /reports/placement-stats (MongoDB aggregate)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/reports/placement-stats",
+              "host": ["{{baseUrl}}"],
+              "path": ["reports", "placement-stats"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

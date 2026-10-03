@@ -1,6 +1,7 @@
 import axios from 'axios';
 
-const API_BASE_URL = 'http://localhost:5000';
+const API_BASE_URL =
+  import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -13,9 +14,11 @@ const api = axios.create({
 api.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem('placement_token');
+
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
+
     return config;
   },
   (error) => {
@@ -29,13 +32,16 @@ api.interceptors.response.use(
   (error) => {
     // If 401 Unauthorized occurs on a protected route, token might have expired
     if (error.response && error.response.status === 401) {
-      const isAuthCheck = error.config.url.includes('/login') || error.config.url.includes('/register');
+      const isAuthCheck =
+        error.config.url.includes('/login') ||
+        error.config.url.includes('/register');
+
       if (!isAuthCheck) {
-        // Clear expired auth session
         localStorage.removeItem('placement_token');
         localStorage.removeItem('placement_user');
       }
     }
+
     return Promise.reject(error);
   }
 );

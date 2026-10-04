@@ -1,28 +1,79 @@
 const express = require('express');
-const router = express.Router();
+const multer = require('multer');
+const path = require('path');
+
+const { protect } = require('../middleware/authMiddleware');
+
 const {
-  applyForDrive,
-  getApplications,
+  createApplication,
+  getAllApplications,
   updateApplication,
   deleteApplication,
-  getPlacementReports,
+  downloadResume,
 } = require('../controllers/applicationController');
-const { protect, authorize } = require('../middleware/authMiddleware');
 
-// Note: Mounted at both root (/apply, /applications) and /api/... in server.js
-// POST /apply - Student applies for a placement drive
-router.post('/apply', protect, authorize('student'), applyForDrive);
+const router = express.Router();
 
-// GET /applications - Scoped to role (Student, Company, Admin)
-router.get('/applications', protect, getApplications);
+const allowedExtensions = new Set(['.pdf', '.doc', '.docx']);
+const allowedMimeTypes = new Set([
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/octet-stream',
+]);
 
-// PUT /applications/:id - Update status / selection (Company or Admin)
-router.put('/applications/:id', protect, authorize('company', 'admin'), updateApplication);
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 5 * 1024 * 1024,
+  },
+  fileFilter: (req, file, cb) => {
+    const extension = path.extname(file.originalname || '').toLowerCase();
+    const validExtension = allowedExtensions.has(extension);
+    const validMime = allowedMimeTypes.has(file.mimetype);
 
-// DELETE /applications/:id - Delete application (Admin)
-router.delete('/applications/:id', protect, authorize('admin'), deleteApplication);
+    // Some browsers/OS combinations send an unusual MIME type for DOC/DOCX.
+    // The extension is therefore also accepted, while the controller performs
+    // the final validation before saving the file.
+    if (validExtension || validMime) {
+      return cb(null, true);
+    }
 
-// Placement reports demonstrating MongoDB aggregate()
-router.get('/reports/placement-stats', protect, authorize('admin'), getPlacementReports);
+    return cb(
+      new multer.MulterError('LIMIT_UNEXPECTED_FILE', 'resume')
+    );
+  },
+});
+
+const handleResumeUpload = (req, res, next) => {
+  upload.single('resume')(req, res, (error) => {
+    if (!error) return next();
+
+    if (error instanceof multer.MulterError) {
+      if (error.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({
+          success: false,
+          message: 'Resume must be 5 MB or smaller.',
+        });
+      }
+
+      return res.status(400).json({
+        success: false,
+        message: 'Please upload a valid PDF, DOC, or DOCX resume.',
+      });
+    }
+
+    return res.status(400).json({
+      success: false,
+      message: error.message || 'Resume upload failed.',
+    });
+  });
+};
+
+router.post('/apply', protect, handleResumeUpload, createApplication);
+router.get('/applications', protect, getAllApplications);
+router.get('/applications/:id/resume', protect, downloadResume);
+router.put('/applications/:id', protect, updateApplication);
+router.delete('/applications/:id', protect, deleteApplication);
 
 module.exports = router;

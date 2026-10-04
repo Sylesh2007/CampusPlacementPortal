@@ -1,128 +1,208 @@
+const path = require('path');
+
 const Application = require('../models/Application');
 const PlacementDrive = require('../models/PlacementDrive');
-const Company = require('../models/Company');
 const User = require('../models/User');
+const Company = require('../models/Company');
 
-// Helper to enrich applications with Drive, Company, and Student details
-const enrichApplications = async (apps) => {
-  if (!apps.length) return [];
+const MAX_RESUME_SIZE = 5 * 1024 * 1024;
+const ALLOWED_EXTENSIONS = new Set(['.pdf', '.doc', '.docx']);
+const ALLOWED_MIME_TYPES = new Set([
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/octet-stream',
+]);
 
-  const driveIds = [...new Set(apps.map((a) => a.driveId))];
-  const studentIds = [...new Set(apps.map((a) => a.studentId))];
+const makeApplicationId = () =>
+  `APP${Date.now()}${Math.floor(Math.random() * 1000)}`;
 
-  const [drives, users] = await Promise.all([
-    PlacementDrive.find({ driveId: { $in: driveIds } }),
-    User.find({ userId: { $in: studentIds } }).select('userId name email role'),
-  ]);
+const getUserRole = (req) => String(req.user?.role || '').toLowerCase();
 
-  const companyIds = [...new Set(drives.map((d) => d.companyId))];
-  const companies = await Company.find({ companyId: { $in: companyIds } });
+const normalize = (value) => String(value || '').trim().toLowerCase();
 
-  const companyMap = {};
-  companies.forEach((c) => {
-    companyMap[c.companyId] = c;
-  });
+const getCompanyIdsForUser = async (user) => {
+  if (!user) return [];
 
-  const driveMap = {};
-  drives.forEach((d) => {
-    const dObj = d.toObject ? d.toObject() : { ...d };
-    dObj.company = companyMap[d.companyId] || null;
-    driveMap[d.driveId] = dObj;
-  });
+  const values = [
+    user.userId,
+    user.companyId,
+    user.name,
+    user.email,
+  ].filter(Boolean);
 
-  const userMap = {};
-  users.forEach((u) => {
-    userMap[u.userId] = u;
-  });
+  const companyOr = [
+    { companyId: user.userId },
+    { companyId: user.companyId },
+    { HRName: user.name },
+    { email: user.email },
+    { HREmail: user.email },
+  ].filter((item) => Object.values(item)[0]);
 
-  return apps.map((a) => {
-    const appObj = a.toObject ? a.toObject() : { ...a };
-    appObj.drive = driveMap[a.driveId] || null;
-    appObj.student = userMap[a.studentId] || null;
-    return appObj;
-  });
+  const company = companyOr.length
+    ? await Company.findOne({ $or: companyOr })
+    : null;
+
+  if (company?.companyId) values.push(company.companyId);
+
+  return [...new Set(values.map(normalize).filter(Boolean))];
 };
 
-// @desc    Apply for a placement drive
-// @route   POST /apply or POST /api/apply
-// @access  Student (or Public/Authenticated)
-const applyForDrive = async (req, res) => {
+const validateResume = (file) => {
+  if (!file) {
+    return 'Please upload your latest resume.';
+  }
+
+  if (!file.buffer || !file.buffer.length) {
+    return 'The uploaded resume is empty or could not be read.';
+  }
+
+  if (file.size > MAX_RESUME_SIZE) {
+    return 'Resume must be 5 MB or smaller.';
+  }
+
+  const extension = path.extname(file.originalname || '').toLowerCase();
+  const validExtension = ALLOWED_EXTENSIONS.has(extension);
+  const validMime = ALLOWED_MIME_TYPES.has(file.mimetype);
+
+  if (!validExtension && !validMime) {
+    return 'Resume must be PDF, DOC, or DOCX.';
+  }
+
+  return '';
+};
+
+const createApplication = async (req, res) => {
   try {
-    const { applicationId, studentId, driveId } = req.body;
+    const role = getUserRole(req);
 
-    // Resolve studentId from req.user if logged in or from body
-    const finalStudentId = (req.user && req.user.role === 'student' ? req.user.userId : null) || studentId;
-    const finalDriveId = driveId;
-
-    if (!finalStudentId || !finalDriveId) {
-      return res.status(400).json({
+    if (role !== 'student') {
+      return res.status(403).json({
         success: false,
-        message: 'Both studentId and driveId are required to apply.',
+        message: 'Only students can submit job applications.',
       });
     }
 
-    // Verify drive exists
-    const drive = await PlacementDrive.findOne({ driveId: finalDriveId });
+    const studentId = req.user?.userId;
+    const driveId = String(req.body?.driveId || '').trim();
+
+    if (!studentId || !driveId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Student and placement drive are required.',
+      });
+    }
+
+    const drive = await PlacementDrive.findOne({ driveId });
     if (!drive) {
       return res.status(404).json({
         success: false,
-        message: `Placement drive with ID '${finalDriveId}' not found.`,
+        message: 'Placement drive not found.',
       });
     }
 
-    // Check if application deadline passed
-    if (new Date() > new Date(drive.lastDateToApply)) {
-      return res.status(400).json({
-        success: false,
-        message: 'The deadline for applying to this placement drive has passed.',
-      });
-    }
-
-    // Check for duplicate application
-    const existingApp = await Application.findOne({
-      studentId: finalStudentId,
-      driveId: finalDriveId,
-    });
-    if (existingApp) {
-      return res.status(400).json({
-        success: false,
-        message: 'You have already submitted an application for this placement drive.',
-      });
-    }
-
-    // Generate applicationId if not provided
-    let finalApplicationId = applicationId;
-    if (!finalApplicationId) {
-      finalApplicationId = `APP${Date.now().toString().slice(-6)}`;
-    } else {
-      const exists = await Application.findOne({ applicationId: finalApplicationId });
-      if (exists) {
+    if (drive.lastDateToApply) {
+      const deadline = new Date(`${drive.lastDateToApply}T23:59:59`);
+      if (!Number.isNaN(deadline.getTime()) && deadline < new Date()) {
         return res.status(400).json({
           success: false,
-          message: `Application ID '${finalApplicationId}' already exists.`,
+          message: 'The application deadline has passed.',
         });
       }
     }
 
-    // Demonstrates MongoDB create / insert
-    const newApplication = await Application.create({
-      applicationId: finalApplicationId,
-      studentId: finalStudentId,
-      driveId: finalDriveId,
+    const existing = await Application.findOne({ studentId, driveId });
+    if (existing) {
+      return res.status(409).json({
+        success: false,
+        message: 'You have already applied for this placement drive.',
+      });
+    }
+
+    if (String(req.body?.consent) !== 'true') {
+      return res.status(400).json({
+        success: false,
+        message: 'Applicant consent is required.',
+      });
+    }
+
+    const resumeError = validateResume(req.file);
+    if (resumeError) {
+      return res.status(400).json({
+        success: false,
+        message: resumeError,
+      });
+    }
+
+    const application = await Application.create({
+      applicationId: makeApplicationId(),
+      studentId,
+      driveId,
       applicationDate: new Date(),
       status: 'Applied',
       selected: false,
-    });
 
-    const [enriched] = await enrichApplications([newApplication]);
+      phone: req.body.phone,
+      alternatePhone: req.body.alternatePhone,
+      dateOfBirth: req.body.dateOfBirth,
+      gender: req.body.gender,
+      address: req.body.address,
+      city: req.body.city,
+      state: req.body.state,
+      pincode: req.body.pincode,
+      preferredLocation: req.body.preferredLocation,
+
+      // These fields are retained for compatibility with existing records/forms.
+      college: req.body.college,
+      degree: req.body.degree,
+      branch: req.body.branch,
+      graduationYear: req.body.graduationYear,
+      cgpa: req.body.cgpa,
+      tenthPercentage: req.body.tenthPercentage,
+      twelfthPercentage: req.body.twelfthPercentage,
+      backlogs: req.body.backlogs || '0',
+      skills: req.body.skills,
+      certifications: req.body.certifications,
+      projects: req.body.projects,
+      internshipExperience: req.body.internshipExperience,
+      workExperience: req.body.workExperience,
+      linkedinUrl: req.body.linkedinUrl,
+      githubUrl: req.body.githubUrl,
+      portfolioUrl: req.body.portfolioUrl,
+      coverLetter: req.body.coverLetter,
+      noticePeriod: req.body.noticePeriod,
+      workAuthorization: req.body.workAuthorization,
+      relocation: req.body.relocation,
+      expectedSalary: req.body.expectedSalary,
+
+      consent: true,
+
+      resume: {
+        fileName: req.file.originalname,
+        mimeType: req.file.mimetype || 'application/octet-stream',
+        size: req.file.size,
+        data: req.file.buffer,
+      },
+    });
 
     return res.status(201).json({
       success: true,
-      message: 'Application submitted successfully!',
-      data: enriched,
+      message: 'Application submitted successfully.',
+      data: {
+        applicationId: application.applicationId,
+        status: application.status,
+      },
     });
   } catch (error) {
-    console.error('Error applying for drive:', error);
+    console.error('Create application error:', error);
+
+    if (error.code === 11000) {
+      return res.status(409).json({
+        success: false,
+        message: 'You have already applied for this placement drive.',
+      });
+    }
+
     return res.status(500).json({
       success: false,
       message: 'Failed to submit application.',
@@ -131,107 +211,130 @@ const applyForDrive = async (req, res) => {
   }
 };
 
-// @desc    Get applications (filtered by student, drive, or company)
-// @route   GET /applications or GET /api/applications
-// @access  Authenticated
-const getApplications = async (req, res) => {
+const getAllApplications = async (req, res) => {
   try {
-    const { studentId, driveId, companyId, status, selected } = req.query;
+    const role = getUserRole(req);
     let query = {};
 
-    // Role-based scoping
-    if (req.user && req.user.role === 'student') {
+    if (role === 'student') {
       query.studentId = req.user.userId;
-    } else if (studentId) {
-      query.studentId = studentId;
+    } else if (role === 'company') {
+      const companyIds = await getCompanyIdsForUser(req.user);
+      const drives = await PlacementDrive.find({
+        companyId: { $in: companyIds },
+      }).select('driveId -_id');
+
+      query.driveId = { $in: drives.map((drive) => drive.driveId) };
     }
 
-    if (driveId) {
-      query.driveId = driveId;
-    }
+    const applications = await Application.find(query)
+      .sort({ applicationDate: -1 })
+      .select('-resume.data');
 
-    if (status) {
-      query.status = status;
-    }
+    const driveIds = [...new Set(applications.map((app) => app.driveId))];
+    const studentIds = [...new Set(applications.map((app) => app.studentId))];
 
-    if (selected !== undefined) {
-      query.selected = selected === 'true' || selected === true;
-    }
+    const [drives, users] = await Promise.all([
+      PlacementDrive.find({ driveId: { $in: driveIds } }),
+      User.find({ userId: { $in: studentIds } }).select('userId name email'),
+    ]);
 
-    // If company role or companyId filter requested:
-    if (companyId) {
-      const companyDrives = await PlacementDrive.find({ companyId }).select('driveId');
-      const companyDriveIds = companyDrives.map((d) => d.driveId);
-      query.driveId = { $in: companyDriveIds };
-    }
+    const driveMap = new Map(drives.map((drive) => [drive.driveId, drive]));
+    const userMap = new Map(users.map((user) => [user.userId, user]));
 
-    // Demonstrates MongoDB find()
-    const applications = await Application.find(query).sort({ applicationDate: -1 });
-    const enrichedApplications = await enrichApplications(applications);
+    const data = applications.map((application) => ({
+      ...application.toObject(),
+      resume: application.resume
+        ? {
+            fileName: application.resume.fileName,
+            mimeType: application.resume.mimeType,
+            size: application.resume.size,
+          }
+        : null,
+      student: userMap.get(application.studentId) || null,
+      drive: driveMap.get(application.driveId) || null,
+    }));
 
-    return res.status(200).json({
-      success: true,
-      count: enrichedApplications.length,
-      data: enrichedApplications,
-    });
+    return res.json({ success: true, data });
   } catch (error) {
-    console.error('Error fetching applications:', error);
+    console.error('Get applications error:', error);
     return res.status(500).json({
       success: false,
-      message: 'Failed to retrieve applications.',
+      message: 'Failed to fetch applications.',
       error: error.message,
     });
   }
 };
 
-// @desc    Update application status / selection
-// @route   PUT /applications/:id or PUT /api/applications/:id
-// @access  Admin or Company
 const updateApplication = async (req, res) => {
   try {
-    const { id } = req.params;
-    const isObjectId = id.match(/^[0-9a-fA-F]{24}$/);
+    const application = await Application.findOne({
+      applicationId: req.params.id,
+    });
 
-    const filter = {
-      $or: [{ applicationId: id }, ...(isObjectId ? [{ _id: id }] : [])],
-    };
-
-    const applicationToUpdate = await Application.findOne(filter);
-    if (!applicationToUpdate) {
+    if (!application) {
       return res.status(404).json({
         success: false,
-        message: `Application with ID '${id}' not found.`,
+        message: 'Application not found.',
       });
     }
 
-    const { status, selected } = req.body;
-    const updateFields = {};
+    const role = getUserRole(req);
 
-    if (status !== undefined) {
-      updateFields.status = status;
+    if (role === 'student') {
+      return res.status(403).json({
+        success: false,
+        message: 'Students cannot change application status.',
+      });
     }
 
-    if (selected !== undefined) {
-      updateFields.selected = Boolean(selected);
-      // Synchronize status if selected is explicitly marked
-      if (selected === true && (!status || status === 'Applied' || status === 'Under Review')) {
-        updateFields.status = 'Selected';
+    if (role === 'company') {
+      const drive = await PlacementDrive.findOne({ driveId: application.driveId });
+      const companyIds = await getCompanyIdsForUser(req.user);
+
+      if (!drive || !companyIds.includes(normalize(drive.companyId))) {
+        return res.status(403).json({
+          success: false,
+          message: 'You can only update applications for your company drives.',
+        });
       }
     }
 
-    // Demonstrates MongoDB updateOne()
-    await Application.updateOne(filter, { $set: updateFields });
+    const allowedStatus = [
+      'Applied',
+      'Under Review',
+      'Verified',
+      'Shortlisted',
+      'Interview Scheduled',
+      'Rejected',
+      'Selected',
+    ];
 
-    const updatedApp = await Application.findOne(filter);
-    const [enriched] = await enrichApplications([updatedApp]);
+    if (req.body.status && !allowedStatus.includes(req.body.status)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid application status.',
+      });
+    }
 
-    return res.status(200).json({
+    if (req.body.status !== undefined) {
+      application.status = req.body.status;
+    }
+
+    if (req.body.selected !== undefined) {
+      application.selected =
+        req.body.selected === true || String(req.body.selected) === 'true';
+    }
+
+    await application.save();
+
+    return res.json({
       success: true,
       message: 'Application updated successfully.',
-      data: enriched,
+      data: application,
     });
   } catch (error) {
-    console.error('Error updating application:', error);
+    console.error('Update application error:', error);
     return res.status(500).json({
       success: false,
       message: 'Failed to update application.',
@@ -240,34 +343,48 @@ const updateApplication = async (req, res) => {
   }
 };
 
-// @desc    Delete an application
-// @route   DELETE /applications/:id or DELETE /api/applications/:id
-// @access  Admin
 const deleteApplication = async (req, res) => {
   try {
-    const { id } = req.params;
-    const isObjectId = id.match(/^[0-9a-fA-F]{24}$/);
+    const application = await Application.findOne({
+      applicationId: req.params.id,
+    });
 
-    const filter = {
-      $or: [{ applicationId: id }, ...(isObjectId ? [{ _id: id }] : [])],
-    };
-
-    // Demonstrates MongoDB deleteOne()
-    const deleteResult = await Application.deleteOne(filter);
-
-    if (deleteResult.deletedCount === 0) {
+    if (!application) {
       return res.status(404).json({
         success: false,
-        message: `Application with ID '${id}' not found.`,
+        message: 'Application not found.',
       });
     }
 
-    return res.status(200).json({
+    const role = getUserRole(req);
+
+    if (role === 'student' && application.studentId !== req.user.userId) {
+      return res.status(403).json({
+        success: false,
+        message: 'You can only delete your own application.',
+      });
+    }
+
+    if (role === 'company') {
+      const drive = await PlacementDrive.findOne({ driveId: application.driveId });
+      const companyIds = await getCompanyIdsForUser(req.user);
+
+      if (!drive || !companyIds.includes(normalize(drive.companyId))) {
+        return res.status(403).json({
+          success: false,
+          message: 'Unauthorized.',
+        });
+      }
+    }
+
+    await Application.deleteOne({ applicationId: req.params.id });
+
+    return res.json({
       success: true,
       message: 'Application deleted successfully.',
     });
   } catch (error) {
-    console.error('Error deleting application:', error);
+    console.error('Delete application error:', error);
     return res.status(500).json({
       success: false,
       message: 'Failed to delete application.',
@@ -276,123 +393,67 @@ const deleteApplication = async (req, res) => {
   }
 };
 
-// @desc    Get placement reports and statistics using MongoDB aggregate()
-// @route   GET /reports/placement-stats or GET /api/reports/placement-stats
-// @access  Admin
-const getPlacementReports = async (req, res) => {
+const downloadResume = async (req, res) => {
   try {
-    // Total counts
-    const [totalUsers, totalStudents, totalCompanies, totalDrives, totalApplications] = await Promise.all([
-      User.countDocuments(),
-      User.countDocuments({ role: 'student' }),
-      Company.countDocuments(),
-      PlacementDrive.countDocuments(),
-      Application.countDocuments(),
-    ]);
+    const application = await Application.findOne({
+      applicationId: req.params.id,
+    }).select('+resume.data');
 
-    // Demonstrates MongoDB aggregate() for Status Breakdown
-    const statusBreakdown = await Application.aggregate([
-      {
-        $group: {
-          _id: '$status',
-          count: { $sum: 1 },
-        },
-      },
-      {
-        $project: {
-          status: '$_id',
-          count: 1,
-          _id: 0,
-        },
-      },
-    ]);
+    if (!application?.resume?.data) {
+      return res.status(404).json({
+        success: false,
+        message: 'Resume not found.',
+      });
+    }
 
-    // Demonstrates MongoDB aggregate() for Selection Statistics
-    const selectionStats = await Application.aggregate([
-      {
-        $group: {
-          _id: '$selected',
-          count: { $sum: 1 },
-        },
-      },
-      {
-        $project: {
-          selected: '$_id',
-          count: 1,
-          _id: 0,
-        },
-      },
-    ]);
+    const role = getUserRole(req);
 
-    // Demonstrates MongoDB aggregate() for Drive-wise Applications & Selections
-    const driveStats = await Application.aggregate([
-      {
-        $group: {
-          _id: '$driveId',
-          totalApplications: { $sum: 1 },
-          selectedCount: {
-            $sum: { $cond: [{ $eq: ['$selected', true] }, 1, 0] },
-          },
-        },
-      },
-      {
-        $lookup: {
-          from: 'placementdrives',
-          localField: '_id',
-          foreignField: 'driveId',
-          as: 'driveDetails',
-        },
-      },
-      {
-        $unwind: {
-          path: '$driveDetails',
-          preserveNullAndEmptyArrays: true,
-        },
-      },
-      {
-        $project: {
-          driveId: '$_id',
-          totalApplications: 1,
-          selectedCount: 1,
-          jobRole: '$driveDetails.jobRole',
-          companyId: '$driveDetails.companyId',
-          vacancies: '$driveDetails.vacancies',
-          _id: 0,
-        },
-      },
-      { $sort: { totalApplications: -1 } },
-    ]);
+    if (role === 'student' && application.studentId !== req.user.userId) {
+      return res.status(403).json({
+        success: false,
+        message: 'Unauthorized.',
+      });
+    }
 
-    return res.status(200).json({
-      success: true,
-      data: {
-        summary: {
-          totalUsers,
-          totalStudents,
-          totalCompanies,
-          totalDrives,
-          totalApplications,
-          totalSelected: selectionStats.find((s) => s.selected === true)?.count || 0,
-        },
-        statusBreakdown,
-        selectionStats,
-        driveStats,
-      },
-    });
+    if (role === 'company') {
+      const drive = await PlacementDrive.findOne({ driveId: application.driveId });
+      const companyIds = await getCompanyIdsForUser(req.user);
+
+      if (!drive || !companyIds.includes(normalize(drive.companyId))) {
+        return res.status(403).json({
+          success: false,
+          message: 'Unauthorized.',
+        });
+      }
+    }
+
+    const safeFileName = String(
+      application.resume.fileName || 'resume'
+    ).replace(/[\\"\r\n]/g, '_');
+
+    res.setHeader(
+      'Content-Type',
+      application.resume.mimeType || 'application/octet-stream'
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${encodeURIComponent(safeFileName)}"`
+    );
+
+    return res.send(application.resume.data);
   } catch (error) {
-    console.error('Error generating placement reports via aggregate():', error);
+    console.error('Resume download error:', error);
     return res.status(500).json({
       success: false,
-      message: 'Failed to generate placement reports.',
-      error: error.message,
+      message: 'Failed to download resume.',
     });
   }
 };
 
 module.exports = {
-  applyForDrive,
-  getApplications,
+  createApplication,
+  getAllApplications,
   updateApplication,
   deleteApplication,
-  getPlacementReports,
+  downloadResume,
 };

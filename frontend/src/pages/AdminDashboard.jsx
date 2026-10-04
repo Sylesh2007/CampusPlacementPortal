@@ -48,31 +48,74 @@ const AdminDashboard = () => {
     eligibilityCriteria: '',
   });
 
-  const [showAddDrive, setShowAddDrive] = useState(false);
-  const [driveForm, setDriveForm] = useState({
-    companyId: '',
-    jobRole: '',
-    driveDate: '',
-    venue: '',
-    lastDateToApply: '',
-    vacancies: 10,
-  });
-
   const fetchData = async () => {
     setLoading(true);
     setActionError('');
     try {
-      const [repRes, compRes, driveRes, appRes] = await Promise.all([
-        api.get('/reports/placement-stats'),
+      const [compRes, driveRes, appRes] = await Promise.all([
         api.get('/companies'),
         api.get('/drives'),
         api.get('/applications'),
       ]);
 
-      if (repRes.data.success) setReportsData(repRes.data.data);
-      if (compRes.data.success) setCompanies(compRes.data.data);
-      if (driveRes.data.success) setDrives(driveRes.data.data);
-      if (appRes.data.success) setApplications(appRes.data.data);
+      const companyData = compRes.data.success && Array.isArray(compRes.data.data)
+        ? compRes.data.data
+        : [];
+      const driveData = driveRes.data.success && Array.isArray(driveRes.data.data)
+        ? driveRes.data.data
+        : [];
+      const applicationData = appRes.data.success && Array.isArray(appRes.data.data)
+        ? appRes.data.data
+        : [];
+
+      setCompanies(companyData);
+      setDrives(driveData);
+      setApplications(applicationData);
+
+      // Build admin reports from the existing APIs.
+      const uniqueStudents = new Set(
+        applicationData.map((app) => app.studentId).filter(Boolean)
+      ).size;
+
+      const statusMap = applicationData.reduce((acc, app) => {
+        const status = app.status || 'Applied';
+        acc[status] = (acc[status] || 0) + 1;
+        return acc;
+      }, {});
+
+      const statusBreakdown = Object.entries(statusMap).map(([status, count]) => ({
+        status,
+        count,
+      }));
+
+      const driveStats = driveData.map((drive) => {
+        const driveApplications = applicationData.filter(
+          (app) => app.driveId === drive.driveId
+        );
+
+        return {
+          driveId: drive.driveId,
+          jobRole: drive.jobRole,
+          companyId: drive.companyId,
+          vacancies: Number(drive.vacancies || 0),
+          totalApplications: driveApplications.length,
+          selectedCount: driveApplications.filter((app) => app.selected === true).length,
+        };
+      });
+
+      setReportsData({
+        summary: {
+          totalUsers: uniqueStudents + companyData.length + 1,
+          totalStudents: uniqueStudents,
+          totalCompanies: companyData.length,
+          totalDrives: driveData.length,
+          totalApplications: applicationData.length,
+          totalSelected: applicationData.filter((app) => app.selected === true).length,
+        },
+        statusBreakdown,
+        driveStats,
+      });
+
     } catch (err) {
       console.error('Error fetching admin dashboard data:', err);
       setActionError('Failed to load portal data. Check server connectivity.');
@@ -123,32 +166,6 @@ const AdminDashboard = () => {
   };
 
   // --- Drive Actions ---
-  const handleAddDrive = async (e) => {
-    e.preventDefault();
-    setActionError('');
-    try {
-      const res = await api.post('/drives', {
-        ...driveForm,
-        vacancies: Number(driveForm.vacancies),
-      });
-      if (res.data.success) {
-        setActionSuccess('Placement drive created successfully.');
-        setShowAddDrive(false);
-        setDriveForm({
-          companyId: '',
-          jobRole: '',
-          driveDate: '',
-          venue: '',
-          lastDateToApply: '',
-          vacancies: 10,
-        });
-        fetchData();
-      }
-    } catch (err) {
-      setActionError(err.response?.data?.message || 'Failed to create placement drive.');
-    }
-  };
-
   const handleDeleteDrive = async (driveId) => {
     if (!window.confirm(`Delete placement drive ${driveId}?`)) return;
     try {
@@ -228,17 +245,6 @@ const AdminDashboard = () => {
           >
             <PlusCircle className="w-4 h-4 text-purple-700" />
             Add Company
-          </button>
-          <button
-            onClick={() => {
-              setShowAddDrive(true);
-              setActionError('');
-              setActionSuccess('');
-            }}
-            className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-bold bg-purple-700 hover:bg-purple-600 text-white border border-purple-500 shadow-sm transition-all"
-          >
-            <PlusCircle className="w-4 h-4" />
-            Create Drive
           </button>
         </div>
       </div>
@@ -546,14 +552,11 @@ const AdminDashboard = () => {
           <div className="p-5 border-b border-slate-200 flex items-center justify-between">
             <div>
               <h2 className="font-bold text-base text-slate-900">Manage Placement Drives</h2>
-              <p className="text-xs text-slate-500">Configure job roles, venues, vacancies, and application deadlines</p>
+              <p className="text-xs text-slate-500">Monitor, review, and remove placement drives posted by companies</p>
             </div>
-            <button
-              onClick={() => setShowAddDrive(true)}
-              className="px-3.5 py-2 text-xs font-bold text-white bg-purple-700 hover:bg-purple-800 rounded-xl"
-            >
-              + Create Drive
-            </button>
+            <span className="text-xs font-semibold text-slate-500 bg-slate-100 px-3 py-2 rounded-xl">
+              Company-posted drives
+            </span>
           </div>
 
           <div className="overflow-x-auto">
@@ -833,112 +836,6 @@ const AdminDashboard = () => {
         </div>
       )}
 
-      {/* Modal: Add Placement Drive */}
-      {showAddDrive && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="text-lg font-bold text-slate-900">Create Placement Drive</h3>
-              <button onClick={() => setShowAddDrive(false)} className="text-slate-400 text-lg">✕</button>
-            </div>
-
-            <form onSubmit={handleAddDrive} className="space-y-3">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Associated Company *</label>
-                <select
-                  required
-                  value={driveForm.companyId}
-                  onChange={(e) => setDriveForm({ ...driveForm, companyId: e.target.value })}
-                  className="w-full px-3 py-2 text-sm rounded-xl border border-slate-300 focus:ring-2 focus:ring-purple-600 focus:outline-hidden"
-                >
-                  <option value="">-- Choose Company --</option>
-                  {companies.map((c) => (
-                    <option key={c.companyId} value={c.companyId}>
-                      {c.companyName} ({c.companyId})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Job Role *</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. Software Development Engineer"
-                  value={driveForm.jobRole}
-                  onChange={(e) => setDriveForm({ ...driveForm, jobRole: e.target.value })}
-                  className="w-full px-3 py-2 text-sm rounded-xl border border-slate-300 focus:ring-2 focus:ring-purple-600 focus:outline-hidden"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Drive Date *</label>
-                  <input
-                    type="date"
-                    required
-                    value={driveForm.driveDate}
-                    onChange={(e) => setDriveForm({ ...driveForm, driveDate: e.target.value })}
-                    className="w-full px-3 py-2 text-sm rounded-xl border border-slate-300 focus:ring-2 focus:ring-purple-600 focus:outline-hidden"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Last Date to Apply *</label>
-                  <input
-                    type="date"
-                    required
-                    value={driveForm.lastDateToApply}
-                    onChange={(e) => setDriveForm({ ...driveForm, lastDateToApply: e.target.value })}
-                    className="w-full px-3 py-2 text-sm rounded-xl border border-slate-300 focus:ring-2 focus:ring-purple-600 focus:outline-hidden"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Venue *</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="e.g. Auditorium Hall B"
-                    value={driveForm.venue}
-                    onChange={(e) => setDriveForm({ ...driveForm, venue: e.target.value })}
-                    className="w-full px-3 py-2 text-sm rounded-xl border border-slate-300 focus:ring-2 focus:ring-purple-600 focus:outline-hidden"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Vacancies *</label>
-                  <input
-                    type="number"
-                    min="1"
-                    required
-                    value={driveForm.vacancies}
-                    onChange={(e) => setDriveForm({ ...driveForm, vacancies: e.target.value })}
-                    className="w-full px-3 py-2 text-sm rounded-xl border border-slate-300 focus:ring-2 focus:ring-purple-600 focus:outline-hidden"
-                  />
-                </div>
-              </div>
-
-              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => setShowAddDrive(false)}
-                  className="px-4 py-2 text-xs font-semibold text-slate-600"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 text-xs font-bold text-white bg-purple-700 hover:bg-purple-800 rounded-xl"
-                >
-                  Publish Drive
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

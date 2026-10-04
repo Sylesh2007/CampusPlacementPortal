@@ -52,23 +52,103 @@ const CompanyDashboard = () => {
     try {
       // 1. Fetch company details
       const compRes = await api.get('/companies');
-      if (compRes.data.success) {
-        // Find company corresponding to this user's userId or name
-        const match = compRes.data.data.find(
-          (c) => c.companyId === user?.userId || c.HRName === user?.name
+      let matchedCompany = null;
+
+      if (compRes.data?.success) {
+        const companies = Array.isArray(compRes.data.data)
+          ? compRes.data.data
+          : [];
+
+        const normalize = (value) =>
+          String(value ?? '')
+            .trim()
+            .toLowerCase()
+            .replace(/\s+/g, ' ');
+
+        const loggedInUserId = normalize(user?.userId);
+        const loggedInName = normalize(user?.name);
+        const loggedInEmail = normalize(user?.email);
+        const loggedInCompanyId = normalize(
+          user?.companyId || user?.company?.companyId || user?.company?.id
         );
-        setCompanyProfile(match || (compRes.data.data.length > 0 ? compRes.data.data[0] : null));
+        const loggedInCompanyName = normalize(
+          user?.companyName || user?.company?.companyName || user?.company?.name
+        );
+        const loggedInHrName = normalize(
+          user?.HRName || user?.hrName || user?.company?.HRName || user?.company?.hrName
+        );
+
+        const scoreCompany = (company) => {
+          const companyId = normalize(company?.companyId || company?.id || company?._id);
+          const hrName = normalize(
+            company?.HRName || company?.hrName || company?.hrContact || company?.contactPerson
+          );
+          const companyName = normalize(
+            company?.companyName || company?.name || company?.company
+          );
+          const companyEmail = normalize(
+            company?.email || company?.HREmail || company?.hrEmail || company?.contactEmail
+          );
+
+          let score = 0;
+          if (loggedInCompanyId && companyId === loggedInCompanyId) score += 100;
+          if (loggedInUserId && companyId === loggedInUserId) score += 90;
+          if (loggedInEmail && companyEmail === loggedInEmail) score += 80;
+          if (loggedInHrName && hrName === loggedInHrName) score += 70;
+          if (loggedInName && hrName === loggedInName) score += 60;
+          if (loggedInCompanyName && companyName === loggedInCompanyName) score += 60;
+          if (loggedInName && companyName === loggedInName) score += 50;
+
+          // Supports simple company accounts such as "TCS HR" when the
+          // registered company is named "TCS".
+          if (loggedInName && companyName) {
+            const nameParts = loggedInName.split(' ').filter(Boolean);
+            if (nameParts.some((part) => part.length >= 3 && companyName.includes(part))) {
+              score += 25;
+            }
+          }
+
+          return score;
+        };
+
+        const rankedCompanies = companies
+          .map((company) => ({ company, score: scoreCompany(company) }))
+          .sort((a, b) => b.score - a.score);
+
+        matchedCompany = rankedCompanies[0]?.score > 0
+          ? rankedCompanies[0].company
+          : null;
+
+        // Backward compatibility for a company-role account created before
+        // companyId was stored on the user record.
+        if (!matchedCompany && companies.length === 1) {
+          matchedCompany = companies[0];
+        }
+
+        setCompanyProfile(matchedCompany);
       }
 
-      // 2. Fetch drives
+      // 2. Fetch drives belonging only to the matched company.
       const driveRes = await api.get('/drives');
-      if (driveRes.data.success) {
-        // If company has matched companyId, filter drives for this company, otherwise show all relevant
-        const companyId = user?.userId;
-        const myDrives = driveRes.data.data.filter(
-          (d) => d.companyId === companyId || d.company?.companyId === companyId
-        );
-        setDrives(myDrives.length > 0 ? myDrives : driveRes.data.data);
+      if (driveRes.data?.success) {
+        const allDrives = Array.isArray(driveRes.data.data)
+          ? driveRes.data.data
+          : [];
+
+        const companyId = String(
+          matchedCompany?.companyId || matchedCompany?.id || matchedCompany?._id || ''
+        ).trim();
+
+        const myDrives = companyId
+          ? allDrives.filter((d) => {
+              const driveCompanyId = String(
+                d?.companyId || d?.company?.companyId || d?.company?.id || d?.company?._id || ''
+              ).trim();
+              return driveCompanyId === companyId;
+            })
+          : [];
+
+        setDrives(myDrives);
       }
 
       // 3. Fetch applications
@@ -99,11 +179,22 @@ const CompanyDashboard = () => {
       return;
     }
 
+    const resolvedCompanyId = String(
+      companyProfile?.companyId || companyProfile?.id || companyProfile?._id || ''
+    ).trim();
+
+    if (!resolvedCompanyId) {
+      setActionError(
+        'No registered company profile could be linked to this company account. Please ask the administrator to register the company first.'
+      );
+      return;
+    }
+
     setSubmittingDrive(true);
     try {
       const payload = {
         ...driveForm,
-        companyId: companyProfile?.companyId || user?.userId || 'CMP001',
+        companyId: resolvedCompanyId,
         vacancies: Number(driveForm.vacancies),
       };
 
@@ -180,7 +271,7 @@ const CompanyDashboard = () => {
         <div className="space-y-2">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/15 text-emerald-100 text-xs font-semibold backdrop-blur-xs">
             <Building2 className="w-4 h-4" />
-            <span>Company Recruitment Console</span>
+            <span>Company Recruitment Console • Placement Drive Management</span>
           </div>
           <h1 className="text-2xl sm:text-3xl font-black tracking-tight">
             {companyProfile?.companyName || user?.name}
@@ -229,10 +320,10 @@ const CompanyDashboard = () => {
         <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs flex items-center justify-between">
           <div>
             <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">
-              Posted Placement Drives
+              My Placement Drives
             </p>
             <h3 className="text-3xl font-black text-slate-900 mt-1">{totalDrivesCount}</h3>
-            <p className="text-xs text-slate-500 mt-1">Active drives managed</p>
+            <p className="text-xs text-slate-500 mt-1">Drives posted by your company</p>
           </div>
           <div className="w-12 h-12 rounded-xl bg-emerald-100 text-emerald-600 flex items-center justify-center">
             <Briefcase className="w-6 h-6" />
